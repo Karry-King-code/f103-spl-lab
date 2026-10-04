@@ -1,0 +1,29 @@
+# Keil 编译产物（不入库）
+MDK-ARM/Objects/
+MDK-ARM/Listings/
+MDK-ARM/f103-spl-lab/
+MDK-ARM/build.log
+MDK-ARM/*.uvguix.*
+MDK-ARM/RTE/
+MDK-ARM/DebugConfig/
+*.o
+*.d
+*.crf
+*.lst
+*.dep
+*.htm
+*.map
+*.axf
+*.hex
+*.lnp
+*.iex
+*.sct
+*.bak
+
+# 硬件资料（版权原因，原理图/芯片手册保存在本地，不入仓库）
+docs/schematics/
+docs/datasheets/
+
+# 系统杂项
+Thumbs.db
+.DS_Store

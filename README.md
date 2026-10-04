@@ -1,0 +1,39 @@
+# f103-spl-lab —— STM32F103C8T6 精英板 · 标准库（SPL）学习仓库
+
+STM32F103C8T6 精英板（嘉立创 v1.3）外设驱动学习项目，**标准外设库（Standard Peripheral Library, SPL）**版本。
+
+> 本仓库是三条学习线之一：同一套外设功能（LED → 串口 → 按键 → 蜂鸣器/继电器 → 温湿度 → 烟雾 → OLED → W25Q Flash → ESP8266 连 OneNET）分别用 **[标准库（本仓库）] / [HAL 库] / [寄存器]** 三种方式各实现一遍，用于对比理解 STM32 的三种开发范式。
+
+## 教程目录
+
+| 章节 | 内容 | 状态 |
+|---|---|---|
+| [01-环境搭建与脚手架](docs/01-环境搭建与脚手架.md) | Keil/DFP 安装、工程结构、编译烧录全流程 | ✅ 脚手架编译通过 |
+| 02-GPIO输出-LED 1s闪烁 | RCC/GPIO 知识点 + 标准库点灯 | 待更新 |
+| 03-USART-串口收发 | 串口知识点 + printf 重定向 | 待更新 |
+| 04-GPIO输入-按键控制LED | 轮询/消抖 + EXTI 中断 | 待更新 |
+| （后续按任务清单推进） | | |
+
+## 工程一览
+
+- **主控**：STM32F103C8T6（Cortex-M3，72MHz，64KB Flash / 20KB RAM）
+- **库**：ST 官方 STM32F10x Standard Peripheral Library **V3.5.0**（STSW-STM32054）
+- **IDE**：Keil MDK5 + 编译器 ARMCC V5.06 (AC5) + 芯片包 Keil::STM32F1xx_DFP 2.3.0
+- **烧录**：ST-Link（SWD）+ STM32CubeProgrammer
+
+```
+f103-spl-lab/
+├─ User/                                # 用户代码（main、中断、外设配置头）
+├─ Libraries/CMSIS/CM3/                 # CMSIS 内核层 + ST 官方设备层（stm32f10x.h / system / 启动文件）
+├─ Libraries/STM32F10x_StdPeriph_Driver/# SPL 官方外设驱动（脚手架仅启用 rcc/gpio/misc，逐章追加）
+├─ MDK-ARM/f103-spl-lab.uvprojx         # Keil 工程
+└─ docs/                                # 教程文档（原理图/芯片手册不入库，见 01 章）
+```
+
+## 硬件资料说明
+
+原理图与芯片手册因版权原因**保存在本地不入仓库**（`docs/schematics/`、`docs/datasheets/` 已在 .gitignore 排除）。板卡引脚分配速查表见 `docs/01-环境搭建与脚手架.md`。
+
+## 免责声明
+
+SPL V3.5.0 为 ST 官方历史库（已停止更新，官方现推 HAL/CubeMX），用于教学理解寄存器与库的映射关系。生产项目请使用 HAL/LL。
