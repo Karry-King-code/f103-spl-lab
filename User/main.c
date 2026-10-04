@@ -1,68 +1,52 @@
 /**
   ******************************************************************************
   * @file    main.c
-  * @brief   02 章：LED 1 秒闪烁（标准库）
-  * @note    LED1=PC14（绿，低电平亮，与继电器共用）；LED2=PC13（红，低电平亮）
-  *          电路（原理图 P3 LED and Key Driver 区）：
-  *          3V3 -> LED -> 4.7K -> 引脚，引脚输出低电平(灌电流)时点亮。
-  *          教程：docs/01-环境搭建与脚手架-标准库.md 第 02 章
+  * @brief   02 章：LED 1 秒闪烁（标准库）——正式版
+  * @note    实测定稿（2026-10-04 照片+交替实验）：
+  *            PC13 = 绿色 LED（低电平亮）← 本程序控制它
+  *            PC14 = 继电器（低电平吸合，咔哒；想听咔哒就把 Pin_14 加回来）
+  *            PWR  = 电源指示灯，常亮，软件控制不了
+  *          电路：3.3V -> LED -> 4.7K -> 引脚，引脚输出低电平(灌电流)点亮
   ******************************************************************************
   */
 #include "stm32f10x.h"
 
-/* ---------- SysTick 精确毫秒延时 ----------
- * SysTick 是 Cortex-M3 内核自带的 24 位递减计数器，不占用芯片外设。
- * 时钟源选 HCLK/8：计数一次 = 8/SystemCoreClock 秒。
- * 1ms 需要计数 SystemCoreClock/8/1000 次。
- * 不写死 72000 而用实测值：原理图未画晶振，HSE 起振失败时
- * SystemInit() 会静默回落 HSI 8MHz，SystemCoreClockUpdate()
- * 读 RCC 寄存器现场计算，72M/8M 两种情况都准确。
- */
+/* SysTick 精确毫秒延时：时钟源 HCLK/8，1ms = SystemCoreClock/8/1000 次计数。
+   用 SystemCoreClockUpdate() 实测频率而不是写死 72000，HSE 失败回落 8M 时依然准。 */
 void delay_ms(uint32_t ms)
 {
-    uint32_t tick = SystemCoreClock / 8 / 1000;   /* 1ms 的计数次数 */
-    SysTick->LOAD = tick - 1;                     /* 重装值 */
-    SysTick->VAL  = 0;                            /* 清当前计数值 */
-    SysTick->CTRL = SysTick_CTRL_ENABLE_Msk;      /* 使能（CLKSOURCE=0 -> HCLK/8） */
+    uint32_t tick = SystemCoreClock / 8 / 1000;
+    SysTick->LOAD = tick - 1;
+    SysTick->VAL  = 0;
+    SysTick->CTRL = SysTick_CTRL_ENABLE_Msk;
     while (ms--)
     {
-        /* COUNTFLAG 计到 0 由硬件置 1，CPU 读一次自动清零 */
         while ((SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) == 0)
         {
         }
     }
-    SysTick->CTRL = 0;                            /* 用完关闭 */
+    SysTick->CTRL = 0;
 }
 
 int main(void)
 {
-    GPIO_InitTypeDef gpio;                        /* 标准库的"配置单"结构体 */
+    GPIO_InitTypeDef gpio;
 
-    /* 0) 实测当前系统时钟写入 SystemCoreClock 变量（delay 依赖它） */
-    SystemCoreClockUpdate();
+    SystemCoreClockUpdate();                                /* 实测系统时钟 */
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC, ENABLE);   /* 开 GPIOC 时钟（APB2） */
 
-    /* 1) 打开 GPIOC 时钟（APB2）——不开时钟，下面的配置写不进去 */
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC, ENABLE);
-
-    /* 2) 填"配置单"：PC13+PC14 推挽输出 2MHz */
-    gpio.GPIO_Pin   = GPIO_Pin_13 | GPIO_Pin_14;  /* LED2=PC13, LED1=PC14 */
-    gpio.GPIO_Mode  = GPIO_Mode_Out_PP;           /* 推挽输出 */
-    gpio.GPIO_Speed = GPIO_Speed_2MHz;            /* 1Hz 闪烁，低速即可 */
-
-    /* 3) 应用配置单（内部写 GPIOC 的 CRH 寄存器 [15:0]每脚4位） */
+    gpio.GPIO_Pin   = GPIO_Pin_13;                          /* 只用 PC13（绿灯） */
+    gpio.GPIO_Mode  = GPIO_Mode_Out_PP;                     /* 推挽输出 */
+    gpio.GPIO_Speed = GPIO_Speed_2MHz;                      /* 1Hz 闪烁低速够 */
     GPIO_Init(GPIOC, &gpio);
 
-    /* 4) 上电先输出高电平（两灯灭），再进闪烁循环 */
-    GPIO_WriteBit(GPIOC, GPIO_Pin_13 | GPIO_Pin_14, Bit_SET);
+    GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);             /* 上电先灭（高电平=灭） */
 
     while (1)
     {
-        /* 低电平 -> 两灯亮（PC14 同时驱动继电器吸合，会"咔哒"一声） */
-        GPIO_WriteBit(GPIOC, GPIO_Pin_13 | GPIO_Pin_14, Bit_RESET);
-        delay_ms(1000);                           /* 亮 1 秒 */
-
-        /* 高电平 -> 灭 */
-        GPIO_WriteBit(GPIOC, GPIO_Pin_13 | GPIO_Pin_14, Bit_SET);
-        delay_ms(1000);                           /* 灭 1 秒 */
+        GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_RESET);       /* 低电平 -> 亮 */
+        delay_ms(1000);
+        GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);         /* 高电平 -> 灭 */
+        delay_ms(1000);
     }
 }
