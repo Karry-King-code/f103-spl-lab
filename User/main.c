@@ -1,90 +1,71 @@
-/**
-  ******************************************************************************
-  * @file    main.c
-  * @brief   04 章：串口收发——USART1 115200-8-N-1，收什么回什么
-  * @note    PA9=TX（复用推挽）、PA10=RX（浮空输入），经板载 CH340N 或外接
-  *          USB-TTL 模块连电脑；每收到 1 字节回显 1 字节并翻转绿灯（PC13）。
-  ******************************************************************************
-  */
 #include "stm32f10x.h"
+/* DHT11 RAM 诊断（SWD 读，无需串口）
+   0x20000000: [0]=PB15 IPD [1]=PB15 IPU [2]=协议阶段(2=等应答超时 3=读位超时 4=OK) [3]=边沿数
+   0x20000004: 5 字节数据（校验通过时有效）                                             */
+#define RES ((volatile uint8_t *)0x20004000)   /* RAM 高段，链接器不管理 */
 
-volatile uint32_t g_rx_count = 0;            /* 已收字节数（可用调试器从内存读出验证） */
+#define DEMCR      (*(volatile uint32_t *)0xE000EDFC)
+#define DWT_CTRL   (*(volatile uint32_t *)0xE0001000)
+#define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004)
 
-void delay_ms(uint32_t ms)
-{
-    uint32_t tick = SystemCoreClock / 8 / 1000;
-    SysTick->LOAD = tick - 1;
-    SysTick->VAL  = 0;
-    SysTick->CTRL = SysTick_CTRL_ENABLE_Msk;
-    while (ms--)
-        while ((SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) == 0)
-        {
-        }
-    SysTick->CTRL = 0;
-}
+static void dwt_init(void){ DEMCR |= (1u<<24); DWT_CYCCNT = 0; DWT_CTRL |= 1u; }
+static void delay_us(uint32_t us){ uint32_t s=DWT_CYCCNT; while((DWT_CYCCNT-s) < us*72){} }
+static void delay_ms(uint32_t ms){ while(ms--) delay_us(1000); }
 
-/* ---------- 发送：等 TXE 再写 DR ---------- */
-void uart1_send(uint8_t b)
+static void dht_out_low(void){ GPIO_InitTypeDef g; g.GPIO_Pin=GPIO_Pin_15; g.GPIO_Speed=GPIO_Speed_2MHz; g.GPIO_Mode=GPIO_Mode_Out_PP; GPIO_WriteBit(GPIOB,GPIO_Pin_15,Bit_RESET); GPIO_Init(GPIOB,&g); }
+static void dht_rel(void){ GPIO_InitTypeDef g; g.GPIO_Pin=GPIO_Pin_15; g.GPIO_Speed=GPIO_Speed_2MHz; g.GPIO_Mode=GPIO_Mode_IPU; GPIO_Init(GPIOB,&g); }
+#define DHT_READ() GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_15)
+
+static uint8_t wait_line(uint8_t lv)
 {
-    USART_SendData(USART1, b);
-    while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET)
-    {
-    }
-}
-void uart1_str(const char *s)
-{
-    while (*s)
-        uart1_send((uint8_t)*s++);
+    uint32_t t0 = DWT_CYCCNT;
+    while (DHT_READ() != lv)
+        if ((DWT_CYCCNT - t0) > 5000u*72) return 1;
+    if (RES[3] < 250) RES[3]++;
+    return 0;
 }
 
 int main(void)
 {
-    GPIO_InitTypeDef  gpio;
-    USART_InitTypeDef usart;
-
+    uint8_t i, j, err;
     SystemCoreClockUpdate();
-    /* USART1 挂 APB2，和 GPIOA/GPIOC 同一条时钟线 */
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOC |
-                           RCC_APB2Periph_USART1, ENABLE);
+    dwt_init();
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN|RCC_APB2ENR_IOPBEN|RCC_APB2ENR_USART1EN;
+    dht_rel();
 
-    /* PA9=USART1_TX：复用推挽（引脚控制权交给 USART 外设） */
-    gpio.GPIO_Pin   = GPIO_Pin_9;
-    gpio.GPIO_Mode  = GPIO_Mode_AF_PP;
-    gpio.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(GPIOA, &gpio);
-    /* PA10=USART1_RX：浮空输入（电平由对方决定） */
-    gpio.GPIO_Pin   = GPIO_Pin_10;
-    gpio.GPIO_Mode  = GPIO_Mode_IN_FLOATING;
-    GPIO_Init(GPIOA, &gpio);
-    /* PC13 绿灯：回显反馈 */
-    gpio.GPIO_Pin   = GPIO_Pin_13;
-    gpio.GPIO_Mode  = GPIO_Mode_Out_PP;
-    gpio.GPIO_Speed = GPIO_Speed_2MHz;
-    GPIO_Init(GPIOC, &gpio);
-    GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);
+    /* ① 双读：判断线连接状态 */
+    GPIOB->ODR &= ~(1u<<15);
+    GPIOB->CRH = (GPIOB->CRH & 0x0FFFFFFFU) | 0x80000000U;
+    delay_ms(2);
+    RES[0] = (uint8_t)((GPIOB->IDR>>15)&1);
+    GPIOB->ODR |= (1u<<15);
+    delay_ms(2);
+    RES[1] = (uint8_t)((GPIOB->IDR>>15)&1);
 
-    /* 115200-8-N-1，收+发，无流控 */
-    usart.USART_BaudRate            = 115200;
-    usart.USART_WordLength          = USART_WordLength_8b;
-    usart.USART_StopBits            = USART_StopBits_1;
-    usart.USART_Parity              = USART_Parity_No;
-    usart.USART_Mode                = USART_Mode_Rx | USART_Mode_Tx;
-    usart.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
-    USART_Init(USART1, &usart);
-    USART_Cmd(USART1, ENABLE);
-
-    uart1_str("\r\n=== STM32F103 USART1 READY (115200-8-N-1) ===\r\n");
-    uart1_str("Type anything, I will echo it back. LED toggles per byte.\r\n");
-
-    while (1)
-    {
-        if (USART_GetFlagStatus(USART1, USART_FLAG_RXNE) != RESET)
-        {
-            uint8_t b = (uint8_t)USART_ReceiveData(USART1);
-            uart1_send(b);                   /* 读 DR 会自动清 RXNE */
-            GPIO_WriteBit(GPIOC, GPIO_Pin_13,
-                (BitAction)!GPIO_ReadOutputDataBit(GPIOC, GPIO_Pin_13));
-            g_rx_count++;
+    while(1){
+        /* ② 协议尝试 */
+        RES[2] = 1; RES[3] = 0;
+        for(i=4;i<9;i++) RES[i]=0;
+        dht_out_low();
+        delay_ms(20);
+        RES[2] = 2;
+        dht_rel();
+        if(wait_line(0)) { goto done; }
+        if(wait_line(1)) { goto done; }
+        RES[2] = 3;
+        if(wait_line(0)) { goto done; }   /* 等应答高电平结束(80us)：此前漏了这步导致数据错位一位 */
+        for(i=0;i<5;i++){
+            for(j=0;j<8;j++){
+                if(wait_line(1)) { goto done; }
+                delay_us(40);
+                RES[4+i] = (uint8_t)(RES[4+i]<<1);
+                if(DHT_READ()){ RES[4+i] |= 1; if(wait_line(0)) { goto done; } }
+            }
         }
+        RES[2] = 4;
+        done:
+        if(RES[2]==4 && (uint8_t)(RES[4]+RES[5]+RES[6]+RES[7])!=RES[8])
+            RES[2] = 5;   /* 校验和错 */
+        delay_ms(1500);
     }
 }
