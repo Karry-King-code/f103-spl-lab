@@ -330,8 +330,9 @@ static uint32_t build_publish(uint8_t t_i, uint8_t t_f, uint8_t h_i, uint8_t h_f
     return pack(0x30, b);
 }
 
-/* 发一包 MQTT 报文 */
-static void send_packet(const char *name, uint32_t n, uint32_t wait_ms)
+/* 发一包 MQTT 报文: 等 '>' 5s -> 发字节 -> 等 SEND OK 4s 才算成功
+   返回 1=发出去了 0=失败(调用方应标记网络掉线并重连) */
+static uint8_t send_packet(const char *name, uint32_t n, uint32_t wait_ms)
 {
     char cmd[32];
     uint32_t i, k;
@@ -360,7 +361,7 @@ static void send_packet(const char *name, uint32_t n, uint32_t wait_ms)
     {
         u1str("[!] no '>' prompt, skip this packet\r\n");
         pump(1500);
-        return;
+        return 0;
     }
     for (i = 0; i < n; i++) u2put((char)mq[i]);
 
@@ -377,6 +378,44 @@ static void send_packet(const char *name, uint32_t n, uint32_t wait_ms)
         u1str(ok ? "[ok] SEND OK confirmed\r\n" : "[!] no SEND OK!\r\n");
     }
     pump(wait_ms);
+    return 1;
+}
+
+/* ---- TCP + MQTT CONNECT + SUBSCRIBE(带重试, 治"复位太快被服务器拒之门外") ----
+   实测: 复位后立刻重连, OneNET 上旧会话还没超时(keepalive 1.5x), 新 CONNECT
+   会被回 rc=5 拒掉。所以失败就等 30 秒再试, 最多 4 次。 */
+static uint8_t net_ok = 0;
+
+static uint8_t net_connect(void)
+{
+    long pos;
+    uint32_t n;
+    static const uint8_t PAT_CONNECTED[7] = { 'C','O','N','N','E','C','T' };
+    static const uint8_t PAT_CONNACK[2] = { 0x20, 0x02 };
+    static const uint8_t PAT_SUBACK[2]  = { 0x90, 0x03 };
+
+    at_cmd("AT+CIPSTART=\"TCP\",\"" MQTT_HOST "\"," MQTT_PORT, 6000);
+    pos = find_pat(0, PAT_CONNECTED, 7);
+    if (pos < 0) { u1str("[!] TCP fail\r\n"); return 0; }
+    u1str("\r\n[+] TCP CONNECTED\r\n");
+
+    n = build_connect();
+    pos = (long)rx_head;
+    send_packet("MQTT CONNECT", n, 5000);
+    pos = find_pat((uint32_t)pos, PAT_CONNACK, 2);
+    if (pos < 0) { u1str("[!] no CONNACK\r\n"); return 0; }
+    u1str("[+] CONNACK rc=");
+    u1num(rx_buf[(uint32_t)(pos + 3) % RXCAP]);
+    u1str("\r\n");
+    if (rx_buf[(uint32_t)(pos + 3) % RXCAP] != 0) return 0;
+    o_print(0, 108, "NET");            /* 屏幕右上角亮 NET = 云已连上 */
+
+    n = build_subscribe();
+    pos = (long)rx_head;
+    send_packet("MQTT SUBSCRIBE", n, 3000);
+    pos = find_pat((uint32_t)pos, PAT_SUBACK, 2);
+    u1str(pos >= 0 ? "\r\n[+] SUBACK ok\r\n" : "\r\n[!] no SUBACK\r\n");
+    return 1;
 }
 
 /* ================= 全局传感器值(云/OLED/串口三处共用同一份) ================= */
@@ -388,13 +427,11 @@ static uint32_t g_ok_cnt = 0;
 int main(void)
 {
     uint32_t brr = (36000000UL + 115200 / 2) / 115200;
-    long pos;
     uint32_t n;
     uint8_t  d[5], err, lastv = 0xFF;
     uint8_t  disp_h = 0xFF, disp_t = 0xFF;
     uint32_t cycle = 0;
-    static const uint8_t PAT_CONNACK[2] = { 0x20, 0x02 };
-    static const uint8_t PAT_SUBACK[2]  = { 0x90, 0x03 };
+    uint8_t  tries;
 
     RES[0] = 0x22222701;
     SystemCoreClockUpdate();
@@ -460,34 +497,12 @@ int main(void)
     at_cmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PWD "\"", 13000);
     at_cmd("AT+CIFSR",             2500);
 
-    /* ---- 第二步: TCP 连 OneNET ---- */
-    at_cmd("AT+CIPSTART=\"TCP\",\"" MQTT_HOST "\"," MQTT_PORT, 6000);
+    /* ---- 第二步: TCP + MQTT 连云(带重试) ---- */
+    for (tries = 0; tries < 4 && !net_ok; tries++)
     {
-        static const uint8_t PAT_CONNECTED[7] = { 'C','O','N','N','E','C','T' };
-        pos = find_pat(0, PAT_CONNECTED, 7);
-        if (pos >= 0) u1str("\r\n[+] TCP CONNECTED\r\n");
-        else          u1str("\r\n[!] TCP maybe failed\r\n");
+        net_ok = net_connect();
+        if (!net_ok) { u1str("[..] retry in 30s (old session may be alive)\r\n"); pump(30000); }
     }
-
-    /* ---- 第三步: MQTT CONNECT ---- */
-    n = build_connect();
-    pos = (long)rx_head;
-    send_packet("MQTT CONNECT", n, 5000);
-    pos = find_pat((uint32_t)pos, PAT_CONNACK, 2);
-    if (pos >= 0)
-    {
-        u1str("\r\n[+] CONNACK rc="); u1num(rx_buf[pos + 3]); u1str("\r\n");
-        o_print(0, 108, "NET");          /* 屏幕右上角亮 NET = 云已连上 */
-    }
-    else u1str("\r\n[!] no CONNACK\r\n");
-
-    /* ---- 第四步: SUBSCRIBE 回执主题 ---- */
-    n = build_subscribe();
-    pos = (long)rx_head;
-    send_packet("MQTT SUBSCRIBE", n, 3000);
-    pos = find_pat((uint32_t)pos, PAT_SUBACK, 2);
-    if (pos >= 0) u1str("\r\n[+] SUBACK ok\r\n");
-    else          u1str("\r\n[!] no SUBACK\r\n");
 
     RES[0] = 0x22222702;
 
@@ -545,13 +560,18 @@ int main(void)
         }
         else u1str("\r\n");
 
-        /* 4) 上云(每3轮一次, 且必须拿到过真实读数) */
+        /* 4) 上云(每3轮一次; 掉线自动重连; 必须拿到过真实读数) */
         cycle++;
-        if (g_dht_ok && (cycle % 3u) == 0u)
+        if (!net_ok)
+        {
+            u1str("[..] net down, reconnect...\r\n");
+            net_ok = net_connect();      /* 失败下一轮再试, 不卡死 */
+        }
+        else if (g_dht_ok && (cycle % 3u) == 0u)
         {
             n = build_publish(g_t_i, g_t_f, g_h_i, g_h_f, g_light);
             u1str("publish: "); u1str(payload); u1str("\r\n");
-            send_packet("PUBLISH", n, 4000);
+            if (!send_packet("PUBLISH", n, 4000)) net_ok = 0;
         }
         else pump(800);
 
