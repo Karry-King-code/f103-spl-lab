@@ -51,6 +51,7 @@ SPL V3.5.0 为 ST 官方历史库（已停止更新，官方现推 HAL/CubeMX）
 | 四 | 蜂鸣器和继电器 | `User/chapters/ch4_buzzer_relay.c` | ✅ 烧录验证 |
 | 五+六 | 温湿度 + 光敏打印 | `User/chapters/ch5_6_dht11_light_spl.c` | ✅ 烧录验证 |
 | 七 | OLED 显示 | 见上表文件（含 OLED 代码）| ✅ 烧录验证 |
+| 九 | WiFi上云 ESP8266→OneNET |  | 🔶 实测通过待目视验收 |
 
 **接线定案**：DHT11=VCC/3V3 + DAT/B14 + GND｜光敏=VCC/3V3 + DO/B12 + GND｜OLED=VCC·GND·SCL/B8·SDA/B9
 **三腿差异**：光敏上拉输入 = `GPIO_Mode_IPU`（标准库）/ `Pull=GPIO_PULLUP`（HAL）/ `CRH=0x8 且 ODR=1`（寄存器）
