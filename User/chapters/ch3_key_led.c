@@ -5,20 +5,19 @@
   * @note    KEY1=PB7（上拉输入，按下=0）；绿灯=PC13（低电平亮）
   *          核心思想：把 1 秒的等待切成 100 个 10ms 小片，每片开头查一次按键
   *          ——闪烁和按键"并行"，谁也不卡谁（非阻塞分片）。
-  *          页码注释约定：RM0008 = 《STM32F103xx参考手册(中文参考)》，页码为 PDF 阅读器页码
   ******************************************************************************
   */
 #include "stm32f10x.h"
 
 void delay_ms(uint32_t ms)
 {
-    uint32_t tick = SystemCoreClock / 8 / 1000;   /* SysTick 内核外设：PM0056 第4章（RM0008 无） */
-    SysTick->LOAD = tick - 1;                     /* 重装值（含 0 所以 -1） */
-    SysTick->VAL  = 0;                            /* 清计数与 COUNTFLAG */
-    SysTick->CTRL = SysTick_CTRL_ENABLE_Msk;      /* bit0=1 启动，时钟源 HCLK/8 */
+    uint32_t tick = SystemCoreClock / 8 / 1000;
+    SysTick->LOAD = tick - 1;
+    SysTick->VAL  = 0;
+    SysTick->CTRL = SysTick_CTRL_ENABLE_Msk;
     while (ms--)
         while ((SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) == 0)
-        {                                         /* bit16 COUNTFLAG：数到 0 置位，读即清 */
+        {
         }
     SysTick->CTRL = 0;
 }
@@ -28,7 +27,7 @@ void delay_ms(uint32_t ms)
 uint8_t key_pressed(void)
 {
     static uint8_t last = 1;                 /* 上一次的按键状态（static: 下次进来还记得） */
-    uint8_t now = GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7);   /* 底层=读 GPIOB->IDR 的 bit7（输入电平只看 IDR，PDF 第105页组表） */
+    uint8_t now = GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7);
     uint8_t evt  = 0;
 
     if (last == 1 && now == 0)               /* 1 -> 0 = 捕捉到按下沿 */
@@ -54,20 +53,18 @@ int main(void)
     uint16_t slice   = 0;                    /* 10ms 小片计数器 */
 
     SystemCoreClockUpdate();
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOC, ENABLE);   /* 底层=置 RCC->APB2ENR 的 bit3(IOPBEN)+bit4(IOPCEN)；地址 0x40021018；RM0008 中文版 PDF 第77页 */
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOC, ENABLE);
 
     gpio.GPIO_Pin  = GPIO_Pin_7;             /* PB7 = KEY1 上拉输入 */
-    gpio.GPIO_Mode = GPIO_Mode_IPU;          /* 上拉输入 = CRL[31:28] 填 CNF=10(上/下拉)+MODE=00(输入) = 0b1000，
-                                                并且库内部还会把 ODR bit7 置 1——"上拉"其实是 ODR 位说了算！
-                                                （寄存器版把这步写明，PDF 第113页编码表/第114页位表） */
+    gpio.GPIO_Mode = GPIO_Mode_IPU;
     GPIO_Init(GPIOB, &gpio);
 
     gpio.GPIO_Pin   = GPIO_Pin_13;           /* PC13 = 绿灯 推挽输出 */
-    gpio.GPIO_Mode  = GPIO_Mode_Out_PP;      /* 推挽输出 = CNF=00 + MODE=10(2MHz) = 0b0010 填进 CRH[23:20]（PDF 第113/114页） */
+    gpio.GPIO_Mode  = GPIO_Mode_Out_PP;
     gpio.GPIO_Speed = GPIO_Speed_2MHz;
     GPIO_Init(GPIOC, &gpio);
 
-    GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);   /* 初始：灭；底层=GPIOC->BSRR 置位（PDF 第115页） */
+    GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);   /* 初始：灭 */
 
     while (1)
     {
@@ -77,7 +74,7 @@ int main(void)
             running = !running;              /* 按一下：开 <-> 停 切换 */
             if (running == 0)
             {
-                GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);  /* 停止：灯灭（BSRR 置位） */
+                GPIO_WriteBit(GPIOC, GPIO_Pin_13, Bit_SET);  /* 停止：灯灭 */
                 slice = 0;
             }
         }
@@ -91,7 +88,7 @@ int main(void)
                 slice = 0;
                 /* 翻转灯：读当前输出电平，取反写回 */
                 GPIO_WriteBit(GPIOC, GPIO_Pin_13,
-                    (BitAction)!GPIO_ReadOutputDataBit(GPIOC, GPIO_Pin_13));   /* 底层=先读 ODR 再写 BSRR/BRR——两步不是原子操作 */
+                    (BitAction)!GPIO_ReadOutputDataBit(GPIOC, GPIO_Pin_13));
             }
         }
 
